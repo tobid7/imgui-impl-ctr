@@ -26,7 +26,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED true)
 
 add_subdirectory(vendor)
 
-__imgui_ctr_make_shader("${CMAKE_SOURCE_DIR}/source/imgui_impl_c3d.v.pica" imgui_impl_c3d)
+__imgui_ctr_make_shader("${CMAKE_CURRENT_SOURCE_DIR}/source/imgui_impl_c3d.v.pica" imgui_impl_c3d)
 
 add_library(imgui-ctr STATIC
     source/imgui_impl_ctr.cpp
