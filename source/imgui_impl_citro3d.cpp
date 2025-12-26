@@ -15,6 +15,10 @@
 #include "imgui_impl_c3d_shbin.h"
 #include "imgui_impl_citro3d.h"
 
+#if IMGUI_VERSION_NUM > 19090
+throw "ImGui Version is currently not supported by imgui-impl-ctr"
+#endif
+
 #ifdef IM_IMPL_C3D_NPI_ASSERT
 #define NPI_ASSERT(expr)                                                  \
   if (!(expr)) {                                                          \
@@ -28,7 +32,7 @@
 #define NPI_ASSERT(expr) IM_ASSERT(expr)
 #endif
 
-struct ImGui_ImplCitro3D_Backend_Data {
+    struct ImGui_ImplCitro3D_Backend_Data {
   /* Data */
   // Shader
   DVLB_s* shader = nullptr;
