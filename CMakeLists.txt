@@ -24,7 +24,7 @@ option(IMGUI_CTR_BUILD_EXAMPLE "Build with example" OFF)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED true)
 
-add_subdirectory(vendor)
+add_subdirectory(cmake)
 
 __imgui_ctr_make_shader("${CMAKE_CURRENT_SOURCE_DIR}/source/imgui_impl_c3d.v.pica" imgui_impl_c3d)
 

@@ -119,10 +119,13 @@ int main() {
   auto& style = ImGui::GetStyle();
   style.ScaleAllSizes(0.5f);
   io.IniFilename = nullptr;
+#ifdef IMGUI_HAS_DOCK
+  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+#endif
   ImGui_ImplCtr_Init();
   ImGui_ImplCitro3D_Init();
   // io.Fonts->AddFontFromFileTTF("romfs:/ComicNeue.ttf", 24);
-  
+
   NpiEasyTex ntex;
   NpiEasyTexLoad(ntex, "romfs:/gfx/test.t3x");
 
@@ -142,6 +145,9 @@ int main() {
     ImGui_ImplCitro3D_NewFrame();
     ImGui_ImplCtr_NewFrame();
     ImGui::NewFrame();
+    ImGui::Begin("Test2");
+    ImGui::Text("Test");
+    ImGui::End();
     ImGui::Begin("Test");
     ImGui::Text(
         "Hold Y and use CIRCLEPAD to Move\nThe Window f.e. to Bottom Screen!");
