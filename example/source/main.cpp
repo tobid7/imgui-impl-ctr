@@ -124,7 +124,7 @@ int main() {
 #endif
   ImGui_ImplCtr_Init();
   ImGui_ImplCitro3D_Init();
-  // io.Fonts->AddFontFromFileTTF("romfs:/ComicNeue.ttf", 24);
+  io.Fonts->AddFontFromFileTTF("romfs:/ComicNeue.ttf", 16);
 
   NpiEasyTex ntex;
   NpiEasyTexLoad(ntex, "romfs:/gfx/test.t3x");
@@ -148,6 +148,8 @@ int main() {
     ImGui::Begin("Test2");
     ImGui::Text("Test");
     ImGui::End();
+    ImGui::SetNextWindowPos(ImVec2(200, 360), ImGuiCond_FirstUseEver,
+                            ImVec2(0.5, 0.5));
     ImGui::Begin("Test");
     ImGui::Text(
         "Hold Y and use CIRCLEPAD to Move\nThe Window f.e. to Bottom Screen!");

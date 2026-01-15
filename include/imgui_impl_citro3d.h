@@ -25,8 +25,9 @@
 
 /// @brief Initialisize Citro3D Backend (System Font is Standart and only
 /// possible yet)
-/// @param load_sysfont this bool is currently useless cause fonthandling is not
-/// done yet
+/// @param load_sysfont use this to load the system font
+/// but keep in mind that the system font is a big performance
+/// issue due to its splitted textures
 /// @return Success or Not
 IMGUI_IMPL_API bool ImGui_ImplCitro3D_Init(bool load_sysfont = false);
 /// @brief Deinitialisize ImGui Citro3D Backend
@@ -41,3 +42,6 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_RenderDrawData(ImDrawData* draw_data,
                                                      void* t_top, void* t_bot);
 /// @brief Internal font texture load function
 IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadFontTextures();
+/// @brief This function is an internal function that loads the system font, if
+/// requested
+IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadSystemFont();

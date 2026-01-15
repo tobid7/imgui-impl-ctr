@@ -46,10 +46,13 @@ throw "ImGui Version is currently not supported by imgui-impl-ctr"
 
   // System Font and TextScale
   std::vector<C3D_Tex> FontTextures;
-  C3D_Tex* ImGuiFontTex = nullptr;
   float text_scale;
   // 3DS font glyph ranges
   std::vector<ImWchar> FontRanges;
+
+  C3D_Tex* FontTex = nullptr;  // Alternative font
+  bool FontLoaded = false;
+  bool FontCreated = false;  // Used fo rreloading
 
   // Data stuff
   unsigned int boundScissor[4];
@@ -68,6 +71,13 @@ static ImGui_ImplCitro3D_Backend_Data* ImGui_ImplCitro3D_GetBackendData() {
              ? (ImGui_ImplCitro3D_Backend_Data*)ImGui::GetIO()
                    .BackendRendererUserData
              : nullptr;
+}
+
+static int ImGui_ImplCitro3D_TileIndex(const int& x, const int& y,
+                                       const int& w) {
+  return (((y >> 3) * (w >> 3) + (x >> 3)) << 6) +
+         ((x & 1) | ((y & 1) << 1) | ((x & 2) << 1) | ((y & 2) << 2) |
+          ((x & 4) << 2) | ((y & 4) << 3));
 }
 
 // FastAccess
@@ -183,189 +193,10 @@ IMGUI_IMPL_API bool ImGui_ImplCitro3D_Init(bool load_sysfont) {
       linearAlloc(sizeof(ImDrawIdx) * bknd_data->IndexSize));
   NPI_ASSERT(bknd_data->IndexData);
 
-  // Load System Font
-  if (R_FAILED(fontEnsureMapped()))
-    NPI_ASSERT(false && "Shared System Font is not Mapped");
-
-  const auto font = fontGetSystemFont();
-  const auto fontInfo = fontGetInfo(font);
-  const auto glyphInfo = fontGetGlyphInfo(font);
-  NPI_ASSERT(bknd_data->FontTextures.empty());
-  bknd_data->FontTextures.resize(glyphInfo->nSheets + 1);
-  memset(bknd_data->FontTextures.data(), 0x00,
-         bknd_data->FontTextures.size() * sizeof(bknd_data->FontTextures[0]));
-  bknd_data->text_scale = 30.0f / glyphInfo->cellHeight;
-
-  for (unsigned i = 0; i < glyphInfo->nSheets; i++) {
-    auto& tex = bknd_data->FontTextures[i];
-    tex.data = fontGetGlyphSheetTex(font, i);
-    NPI_ASSERT(tex.data);
-
-    tex.fmt = static_cast<GPU_TEXCOLOR>(glyphInfo->sheetFmt);
-    tex.size = glyphInfo->sheetSize;
-    tex.width = glyphInfo->sheetWidth;
-    tex.height = glyphInfo->sheetHeight;
-    tex.param = GPU_TEXTURE_MAG_FILTER(GPU_LINEAR) |
-                GPU_TEXTURE_MIN_FILTER(GPU_LINEAR) |
-                GPU_TEXTURE_WRAP_S(GPU_REPEAT) | GPU_TEXTURE_WRAP_T(GPU_REPEAT);
-    tex.border = 0xFFFFFFFF;
-    tex.lodParam = 0;
+  if (load_sysfont) {
+    // Load System Font
+    ImGui_ImplCitro3D_LoadSystemFont();
   }
-  // Generate ImGui's white pixel texture
-  auto& tex = bknd_data->FontTextures[glyphInfo->nSheets];
-  C3D_TexInit(&tex, 8, 8, GPU_A4);
-
-  uint32_t size;
-  auto data = C3D_Tex2DGetImagePtr(&tex, 0, &size);
-  NPI_ASSERT(data);
-  NPI_ASSERT(size);
-  memset(data, 0xFF, size);
-
-  ImWchar alterChar =
-      fontCodePointFromGlyphIndex(font, fontInfo->alterCharIndex);
-  if (!alterChar) alterChar = '?';
-
-  std::vector<ImWchar> charSet;
-  for (auto cmap = fontInfo->cmap; cmap; cmap = cmap->next) {
-    switch (cmap->mappingMethod) {
-      case CMAP_TYPE_DIRECT:
-        NPI_ASSERT(cmap->codeEnd >= cmap->codeBegin);
-        charSet.reserve(charSet.size() + cmap->codeEnd - cmap->codeBegin + 1);
-        for (auto i = cmap->codeBegin; i <= cmap->codeEnd; ++i) {
-          if (cmap->indexOffset + (i - cmap->codeBegin) == 0xFFFF) break;
-
-          charSet.emplace_back(i);
-        }
-        break;
-
-      case CMAP_TYPE_TABLE:
-        NPI_ASSERT(cmap->codeEnd >= cmap->codeBegin);
-        charSet.reserve(charSet.size() + cmap->codeEnd - cmap->codeBegin + 1);
-        for (auto i = cmap->codeBegin; i <= cmap->codeEnd; ++i) {
-          if (cmap->indexTable[i - cmap->codeBegin] == 0xFFFF) continue;
-
-          charSet.emplace_back(i);
-        }
-        break;
-
-      case CMAP_TYPE_SCAN:
-        charSet.reserve(charSet.size() + cmap->nScanEntries);
-        for (unsigned i = 0; i < cmap->nScanEntries; ++i) {
-          NPI_ASSERT(cmap->scanEntries[i].code >= cmap->codeBegin);
-          NPI_ASSERT(cmap->scanEntries[i].code <= cmap->codeEnd);
-
-          if (cmap->scanEntries[i].glyphIndex == 0xFFFF) continue;
-
-          charSet.emplace_back(cmap->scanEntries[i].code);
-        }
-        break;
-    }
-  }
-
-  NPI_ASSERT(!charSet.empty());
-
-  // Duplicate Char Map
-  std::sort(std::begin(charSet), std::end(charSet));
-  charSet.erase(std::unique(std::begin(charSet), std::end(charSet)),
-                std::end(charSet));
-
-  auto it = std::begin(charSet);
-  ImWchar start = *it++;
-  ImWchar prev = start;
-  while (it != std::end(charSet)) {
-    if (*it != prev + 1) {
-      bknd_data->FontRanges.emplace_back(start);
-      bknd_data->FontRanges.emplace_back(prev);
-
-      start = *it;
-    }
-
-    prev = *it++;
-  }
-  bknd_data->FontRanges.emplace_back(start);
-  bknd_data->FontRanges.emplace_back(prev);
-
-  // terminate glyph ranges
-  bknd_data->FontRanges.emplace_back(0);
-
-  // initialize font atlas
-  auto const atlas = ImGui::GetIO().Fonts;
-  atlas->Clear();
-  atlas->TexWidth = glyphInfo->sheetWidth;
-  atlas->TexHeight = glyphInfo->sheetHeight * glyphInfo->nSheets;
-  atlas->TexUvScale = ImVec2(1.0f / atlas->TexWidth, 1.0f / atlas->TexHeight);
-  atlas->TexUvWhitePixel =
-      ImVec2(0.5f * 0.125f, glyphInfo->nSheets + 0.5f * 0.125f);
-  atlas->TexPixelsAlpha8 =
-      static_cast<unsigned char*>(IM_ALLOC(1));  // dummy allocation
-
-  // Setup Font Config
-  ImFontConfig config;
-  config.FontData = nullptr;
-  config.FontDataSize = 0;
-  config.FontDataOwnedByAtlas = true;
-  config.FontNo = 0;
-  config.SizePixels = 14.0f;
-  config.OversampleH = 3;
-  config.OversampleV = 1;
-  config.PixelSnapH = false;
-  config.GlyphExtraSpacing = ImVec2(0.0f, 0.0f);
-  config.GlyphOffset = ImVec2(0.0f, fontInfo->ascent);
-  config.GlyphRanges = bknd_data->FontRanges.data();
-  config.GlyphMinAdvanceX = 0.0f;
-  config.GlyphMaxAdvanceX = std::numeric_limits<float>::max();
-  config.MergeMode = false;
-  config.FontBuilderFlags = 0;
-  config.RasterizerMultiply = 1.0f;
-  config.EllipsisChar = 0x2026;
-  memset(config.Name, 0, sizeof(config.Name));
-
-  // create font
-  auto const imFont = IM_NEW(ImFont);
-  config.DstFont = imFont;
-
-  // add config and font to atlas
-  atlas->ConfigData.push_back(config);
-  atlas->Fonts.push_back(imFont);
-  atlas->SetTexID(bknd_data->FontTextures.data());
-
-  // initialize font
-  imFont->FallbackAdvanceX = fontInfo->defaultWidth.charWidth;
-  imFont->FontSize = fontInfo->lineFeed;
-  imFont->ContainerAtlas = atlas;
-  imFont->ConfigData = &atlas->ConfigData[0];
-  imFont->ConfigDataCount = 1;
-  imFont->FallbackChar = alterChar;
-  imFont->EllipsisChar = config.EllipsisChar;
-  imFont->Scale = bknd_data->text_scale * 0.5f;
-  imFont->Ascent = fontInfo->ascent;
-  imFont->Descent = 0.0f;
-
-  fontGlyphPos_s glyphPos;
-  for (auto const& code : charSet) {
-    auto const glyphIndex = fontGlyphIndexFromCodePoint(font, code);
-    NPI_ASSERT(glyphIndex >= 0);
-    NPI_ASSERT(glyphIndex < 0xFFFF);
-
-    fontCalcGlyphPos(&glyphPos, font, glyphIndex,
-                     GLYPH_POS_CALC_VTXCOORD | GLYPH_POS_AT_BASELINE, 1.0f,
-                     1.0f);
-
-    NPI_ASSERT(glyphPos.sheetIndex >= 0);
-    NPI_ASSERT(static_cast<std::size_t>(glyphPos.sheetIndex) <
-               bknd_data->FontRanges.size());
-
-    // Add Glypth to Font
-    imFont->AddGlyph(
-        &config, code, glyphPos.vtxcoord.left,
-        glyphPos.vtxcoord.top + fontInfo->ascent, glyphPos.vtxcoord.right,
-        glyphPos.vtxcoord.bottom + fontInfo->ascent, glyphPos.texcoord.left,
-        glyphPos.sheetIndex + glyphPos.texcoord.top, glyphPos.texcoord.right,
-        glyphPos.sheetIndex + glyphPos.texcoord.bottom, glyphPos.xAdvance);
-  }
-
-  imFont->BuildLookupTable();
-  atlas->TexReady = true;
   return true;
 }
 
@@ -381,9 +212,9 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_Shutdown() {
 IMGUI_IMPL_API void ImGui_ImplCitro3D_NewFrame() {
   ImGui_ImplCitro3D_Backend_Data* bd = ImGui_ImplCitro3D_GetBackendData();
   NPI_ASSERT(bd != nullptr && "Did you call ImGui_ImplCitro3D_Init()?");
-  /*if (!bd->ImGuiFontTex) {
+  if (!bd->FontLoaded) {
     ImGui_ImplCitro3D_LoadFontTextures();
-  }*/
+  }
 }
 
 IMGUI_IMPL_API void ImGui_ImplCitro3D_RenderDrawData(ImDrawData* draw_data,
@@ -659,4 +490,223 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadFontTextures() {
   // clang-format on
   NPI_ASSERT((width <= 1024 && height <= 1024) &&
              "ImGuiCitro3D_LoadFont: Max Tex size is 1024x1024!");
+
+  if (bd->FontCreated) {
+    C3D_TexDelete(bd->FontTex);
+    delete bd->FontTex;
+    bd->FontTex = nullptr;
+    bd->FontCreated = false;
+  }
+
+  bd->FontTex = new C3D_Tex;
+  C3D_TexInit(bd->FontTex, width, height, GPU_RGBA8);
+  C3D_TexSetFilter(bd->FontTex, GPU_LINEAR, GPU_LINEAR);
+  C3D_TexSetWrap(bd->FontTex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      int src = ((height - 1 - y) * width + x) * 4;
+      int dst = ImGui_ImplCitro3D_TileIndex(x, y, width) * 4;
+      static_cast<u8*>(bd->FontTex->data)[dst + 0] = pixels[src + 3];
+      static_cast<u8*>(bd->FontTex->data)[dst + 1] = pixels[src + 2];
+      static_cast<u8*>(bd->FontTex->data)[dst + 2] = pixels[src + 1];
+      static_cast<u8*>(bd->FontTex->data)[dst + 3] = pixels[src + 0];
+    }
+  }
+  C3D_TexFlush(bd->FontTex);
+
+  bd->FontTex->border = 0x00000000;
+
+  io.Fonts->SetTexID((ImTextureID)bd->FontTex);
+  bd->FontCreated = true;
+  bd->FontLoaded = true;
+}
+
+IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadSystemFont() {
+  ImGui_ImplCitro3D_Backend_Data* bknd_data =
+      ImGui_ImplCitro3D_GetBackendData();
+  NPI_ASSERT(bd != nullptr && "Did you call ImGui_ImplCitro3D_Init()?");
+  if (R_FAILED(fontEnsureMapped()))
+    NPI_ASSERT(false && "Shared System Font is not Mapped");
+
+  const auto font = fontGetSystemFont();
+  const auto fontInfo = fontGetInfo(font);
+  const auto glyphInfo = fontGetGlyphInfo(font);
+  NPI_ASSERT(bknd_data->FontTextures.empty());
+  bknd_data->FontTextures.resize(glyphInfo->nSheets + 1);
+  memset(bknd_data->FontTextures.data(), 0x00,
+         bknd_data->FontTextures.size() * sizeof(bknd_data->FontTextures[0]));
+  bknd_data->text_scale = 30.0f / glyphInfo->cellHeight;
+
+  for (unsigned i = 0; i < glyphInfo->nSheets; i++) {
+    auto& tex = bknd_data->FontTextures[i];
+    tex.data = fontGetGlyphSheetTex(font, i);
+    NPI_ASSERT(tex.data);
+
+    tex.fmt = static_cast<GPU_TEXCOLOR>(glyphInfo->sheetFmt);
+    tex.size = glyphInfo->sheetSize;
+    tex.width = glyphInfo->sheetWidth;
+    tex.height = glyphInfo->sheetHeight;
+    tex.param = GPU_TEXTURE_MAG_FILTER(GPU_LINEAR) |
+                GPU_TEXTURE_MIN_FILTER(GPU_LINEAR) |
+                GPU_TEXTURE_WRAP_S(GPU_REPEAT) | GPU_TEXTURE_WRAP_T(GPU_REPEAT);
+    tex.border = 0xFFFFFFFF;
+    tex.lodParam = 0;
+  }
+  // Generate ImGui's white pixel texture
+  auto& tex = bknd_data->FontTextures[glyphInfo->nSheets];
+  C3D_TexInit(&tex, 8, 8, GPU_A4);
+
+  uint32_t size;
+  auto data = C3D_Tex2DGetImagePtr(&tex, 0, &size);
+  NPI_ASSERT(data);
+  NPI_ASSERT(size);
+  memset(data, 0xFF, size);
+
+  ImWchar alterChar =
+      fontCodePointFromGlyphIndex(font, fontInfo->alterCharIndex);
+  if (!alterChar) alterChar = '?';
+
+  std::vector<ImWchar> charSet;
+  for (auto cmap = fontInfo->cmap; cmap; cmap = cmap->next) {
+    switch (cmap->mappingMethod) {
+      case CMAP_TYPE_DIRECT:
+        NPI_ASSERT(cmap->codeEnd >= cmap->codeBegin);
+        charSet.reserve(charSet.size() + cmap->codeEnd - cmap->codeBegin + 1);
+        for (auto i = cmap->codeBegin; i <= cmap->codeEnd; ++i) {
+          if (cmap->indexOffset + (i - cmap->codeBegin) == 0xFFFF) break;
+
+          charSet.emplace_back(i);
+        }
+        break;
+
+      case CMAP_TYPE_TABLE:
+        NPI_ASSERT(cmap->codeEnd >= cmap->codeBegin);
+        charSet.reserve(charSet.size() + cmap->codeEnd - cmap->codeBegin + 1);
+        for (auto i = cmap->codeBegin; i <= cmap->codeEnd; ++i) {
+          if (cmap->indexTable[i - cmap->codeBegin] == 0xFFFF) continue;
+
+          charSet.emplace_back(i);
+        }
+        break;
+
+      case CMAP_TYPE_SCAN:
+        charSet.reserve(charSet.size() + cmap->nScanEntries);
+        for (unsigned i = 0; i < cmap->nScanEntries; ++i) {
+          NPI_ASSERT(cmap->scanEntries[i].code >= cmap->codeBegin);
+          NPI_ASSERT(cmap->scanEntries[i].code <= cmap->codeEnd);
+
+          if (cmap->scanEntries[i].glyphIndex == 0xFFFF) continue;
+
+          charSet.emplace_back(cmap->scanEntries[i].code);
+        }
+        break;
+    }
+  }
+
+  NPI_ASSERT(!charSet.empty());
+
+  // Duplicate Char Map
+  std::sort(std::begin(charSet), std::end(charSet));
+  charSet.erase(std::unique(std::begin(charSet), std::end(charSet)),
+                std::end(charSet));
+
+  auto it = std::begin(charSet);
+  ImWchar start = *it++;
+  ImWchar prev = start;
+  while (it != std::end(charSet)) {
+    if (*it != prev + 1) {
+      bknd_data->FontRanges.emplace_back(start);
+      bknd_data->FontRanges.emplace_back(prev);
+
+      start = *it;
+    }
+
+    prev = *it++;
+  }
+  bknd_data->FontRanges.emplace_back(start);
+  bknd_data->FontRanges.emplace_back(prev);
+
+  // terminate glyph ranges
+  bknd_data->FontRanges.emplace_back(0);
+
+  // initialize font atlas
+  auto const atlas = ImGui::GetIO().Fonts;
+  atlas->Clear();
+  atlas->TexWidth = glyphInfo->sheetWidth;
+  atlas->TexHeight = glyphInfo->sheetHeight * glyphInfo->nSheets;
+  atlas->TexUvScale = ImVec2(1.0f / atlas->TexWidth, 1.0f / atlas->TexHeight);
+  atlas->TexUvWhitePixel =
+      ImVec2(0.5f * 0.125f, glyphInfo->nSheets + 0.5f * 0.125f);
+  atlas->TexPixelsAlpha8 =
+      static_cast<unsigned char*>(IM_ALLOC(1));  // dummy allocation
+
+  // Setup Font Config
+  ImFontConfig config;
+  config.FontData = nullptr;
+  config.FontDataSize = 0;
+  config.FontDataOwnedByAtlas = true;
+  config.FontNo = 0;
+  config.SizePixels = 14.0f;
+  config.OversampleH = 3;
+  config.OversampleV = 1;
+  config.PixelSnapH = false;
+  config.GlyphExtraSpacing = ImVec2(0.0f, 0.0f);
+  config.GlyphOffset = ImVec2(0.0f, fontInfo->ascent);
+  config.GlyphRanges = bknd_data->FontRanges.data();
+  config.GlyphMinAdvanceX = 0.0f;
+  config.GlyphMaxAdvanceX = std::numeric_limits<float>::max();
+  config.MergeMode = false;
+  config.FontBuilderFlags = 0;
+  config.RasterizerMultiply = 1.0f;
+  config.EllipsisChar = 0x2026;
+  memset(config.Name, 0, sizeof(config.Name));
+
+  // create font
+  auto const imFont = IM_NEW(ImFont);
+  config.DstFont = imFont;
+
+  // add config and font to atlas
+  atlas->ConfigData.push_back(config);
+  atlas->Fonts.push_back(imFont);
+  atlas->SetTexID(bknd_data->FontTextures.data());
+
+  // initialize font
+  imFont->FallbackAdvanceX = fontInfo->defaultWidth.charWidth;
+  imFont->FontSize = fontInfo->lineFeed;
+  imFont->ContainerAtlas = atlas;
+  imFont->ConfigData = &atlas->ConfigData[0];
+  imFont->ConfigDataCount = 1;
+  imFont->FallbackChar = alterChar;
+  imFont->EllipsisChar = config.EllipsisChar;
+  imFont->Scale = bknd_data->text_scale * 0.5f;
+  imFont->Ascent = fontInfo->ascent;
+  imFont->Descent = 0.0f;
+
+  fontGlyphPos_s glyphPos;
+  for (auto const& code : charSet) {
+    auto const glyphIndex = fontGlyphIndexFromCodePoint(font, code);
+    NPI_ASSERT(glyphIndex >= 0);
+    NPI_ASSERT(glyphIndex < 0xFFFF);
+
+    fontCalcGlyphPos(&glyphPos, font, glyphIndex,
+                     GLYPH_POS_CALC_VTXCOORD | GLYPH_POS_AT_BASELINE, 1.0f,
+                     1.0f);
+
+    NPI_ASSERT(glyphPos.sheetIndex >= 0);
+    NPI_ASSERT(static_cast<std::size_t>(glyphPos.sheetIndex) <
+               bknd_data->FontRanges.size());
+
+    // Add Glypth to Font
+    imFont->AddGlyph(
+        &config, code, glyphPos.vtxcoord.left,
+        glyphPos.vtxcoord.top + fontInfo->ascent, glyphPos.vtxcoord.right,
+        glyphPos.vtxcoord.bottom + fontInfo->ascent, glyphPos.texcoord.left,
+        glyphPos.sheetIndex + glyphPos.texcoord.top, glyphPos.texcoord.right,
+        glyphPos.sheetIndex + glyphPos.texcoord.bottom, glyphPos.xAdvance);
+  }
+
+  imFont->BuildLookupTable();
+  atlas->TexReady = true;
+  bknd_data->FontLoaded = true;
 }
