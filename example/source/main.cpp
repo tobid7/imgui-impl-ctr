@@ -66,6 +66,7 @@ void NpiImGuiImage(NpiEasyTex texture, size_t index,
                tint_col, border_col);
 }
 
+#if IMGUI_VERSION_NUM <= 19090
 void NpiImGuiImageButton(NpiEasyTex texture, size_t index,
                          int frame_padding = -1,
                          const ImVec4& bg_col = ImVec4(0, 0, 0, 0),
@@ -75,6 +76,7 @@ void NpiImGuiImageButton(NpiEasyTex texture, size_t index,
       texture.tex, ImVec2(sub->width, sub->height), ImVec2(sub->left, sub->top),
       ImVec2(sub->right, sub->bottom), frame_padding, bg_col, tint_col);
 }
+#endif
 
 // clang-format off
 std::vector<std::string> styles = {

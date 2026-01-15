@@ -130,9 +130,15 @@ void ProcessKeyboard(ImGuiIO &io) {
       swkbdInit(&kbd, SWKBD_TYPE_NORMAL, 2, -1);
       swkbdSetButton(&kbd, SWKBD_BUTTON_LEFT, "Cancel", false);
       swkbdSetButton(&kbd, SWKBD_BUTTON_RIGHT, "OK", true);
+#if IMGUI_VERSION_NUM <= 19090
       swkbdSetInitialText(&kbd, std::string(textState.InitialTextA.Data,
                                             textState.InitialTextA.Size)
                                     .c_str());
+#else
+      swkbdSetInitialText(
+          &kbd,
+          std::string(textState.TextA.Data, textState.TextA.Size).c_str());
+#endif
       if (textState.Flags & ImGuiInputTextFlags_Password)
         swkbdSetPasswordMode(&kbd, SWKBD_PASSWORD_HIDE_DELAY);
       char buffer[32] = {0};

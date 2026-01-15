@@ -15,9 +15,9 @@
 #include "imgui_impl_c3d_shbin.h"
 #include "imgui_impl_citro3d.h"
 
-#if IMGUI_VERSION_NUM > 19090
+/*#if IMGUI_VERSION_NUM > 19090
 throw "ImGui Version is currently not supported by imgui-impl-ctr"
-#endif
+#endif*/
 
 #ifdef IM_IMPL_C3D_NPI_ASSERT
 #define NPI_ASSERT(expr)                                                  \
@@ -32,7 +32,7 @@ throw "ImGui Version is currently not supported by imgui-impl-ctr"
 #define NPI_ASSERT(expr) IM_ASSERT(expr)
 #endif
 
-    struct ImGui_ImplCitro3D_Backend_Data {
+struct ImGui_ImplCitro3D_Backend_Data {
   /* Data */
   // Shader
   DVLB_s* shader = nullptr;
@@ -373,8 +373,12 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_RenderDrawData(ImDrawData* draw_data,
             BufInfo_Add(bufInfo, vtxData, sizeof(ImDrawVert), 3, 0x210);
           }
 
-          // Check if Bound Texture needs to be updated
+// Check if Bound Texture needs to be updated
+#if IMGUI_VERSION_NUM <= 19090
           auto tex = static_cast<C3D_Tex*>(cmd.TextureId);
+#else
+          auto tex = reinterpret_cast<C3D_Tex*>(cmd.TexRef.GetTexID());
+#endif
           if (tex == bknd_data->FontTextures.data()) {
             NPI_ASSERT(cmd.ElemCount % 3 == 0);
 
@@ -523,6 +527,7 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadFontTextures() {
 }
 
 IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadSystemFont() {
+#if IMGUI_VERSION_NUM <= 19090
   ImGui_ImplCitro3D_Backend_Data* bknd_data =
       ImGui_ImplCitro3D_GetBackendData();
   NPI_ASSERT(bknd_data != nullptr && "Did you call ImGui_ImplCitro3D_Init()?");
@@ -709,4 +714,5 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadSystemFont() {
   imFont->BuildLookupTable();
   atlas->TexReady = true;
   bknd_data->FontLoaded = true;
+#endif
 }
