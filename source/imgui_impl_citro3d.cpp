@@ -525,7 +525,7 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadFontTextures() {
 IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadSystemFont() {
   ImGui_ImplCitro3D_Backend_Data* bknd_data =
       ImGui_ImplCitro3D_GetBackendData();
-  NPI_ASSERT(bd != nullptr && "Did you call ImGui_ImplCitro3D_Init()?");
+  NPI_ASSERT(bknd_data != nullptr && "Did you call ImGui_ImplCitro3D_Init()?");
   if (R_FAILED(fontEnsureMapped()))
     NPI_ASSERT(false && "Shared System Font is not Mapped");
 
