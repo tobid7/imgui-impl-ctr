@@ -122,6 +122,35 @@ unsigned int fontCodePointFromGlyphIndex(CFNT_s* const font,
   return 0;
 }
 
+C3D_Tex* MakeItATexture(const unsigned char* ptr, size_t len, int w, int h) {
+  C3D_Tex* ret = new C3D_Tex;
+  C3D_TexInit(ret, w, h, GPU_RGBA8);
+  C3D_TexSetFilter(ret, GPU_LINEAR, GPU_LINEAR);
+  C3D_TexSetWrap(ret, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+
+  // BTW We just flip the tex to not worry about uvs
+  // Oh and we tile te tex as well as make them abgr
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      int src = ((h - 1 - y) * w + x) * 4;
+      int dst = ImGui_ImplCitro3D_TileIndex(x, y, w) * 4;
+      static_cast<u8*>(ret->data)[dst + 0] = ptr[src + 3];
+      static_cast<u8*>(ret->data)[dst + 1] = ptr[src + 2];
+      static_cast<u8*>(ret->data)[dst + 2] = ptr[src + 1];
+      static_cast<u8*>(ret->data)[dst + 3] = ptr[src + 0];
+    }
+  }
+  C3D_TexFlush(ret);
+
+  ret->border = 0x00000000;
+  return ret;
+}
+
+void DestroyTheTex(C3D_Tex* tex) {
+  C3D_TexDelete(tex);
+  delete tex;
+}
+
 void SetupRendererForScreen(const gfxScreen_t screen) {
   auto bknd_data = ImGui_ImplCitro3D_GetBackendData();
   for (int i = 0; i < 4; i++) {
@@ -162,6 +191,9 @@ IMGUI_IMPL_API bool ImGui_ImplCitro3D_Init(bool load_sysfont) {
 
   io.BackendRendererName = "imgui_impl_citro3d";
   io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
+#if IMGUI_VERSION_NUM >= 19200
+  io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+#endif
 
   auto bknd_data = ImGui_ImplCitro3D_GetBackendData();
 
@@ -202,6 +234,21 @@ IMGUI_IMPL_API bool ImGui_ImplCitro3D_Init(bool load_sysfont) {
 
 IMGUI_IMPL_API void ImGui_ImplCitro3D_Shutdown() {
   auto bknd_data = ImGui_ImplCitro3D_GetBackendData();
+
+#if IMGUI_VERSION_NUM >= 19200
+  for (ImTextureData* tex : ImGui::GetPlatformIO().Textures)
+    if (tex->RefCount == 1) {
+      tex->SetStatus(ImTextureStatus_WantDestroy);
+      ImGui_ImplCitro3D_UpdateTexture(tex);
+    }
+#else
+  if (bknd_data->FontCreated) {
+    DestroyTheTex(bknd_data->FontTex);
+    bknd_data->FontTex = nullptr;
+    bknd_data->FontCreated = false;
+  }
+#endif
+
   linearFree(bknd_data->VertexData);
   linearFree(bknd_data->IndexData);
 
@@ -212,9 +259,11 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_Shutdown() {
 IMGUI_IMPL_API void ImGui_ImplCitro3D_NewFrame() {
   ImGui_ImplCitro3D_Backend_Data* bd = ImGui_ImplCitro3D_GetBackendData();
   NPI_ASSERT(bd != nullptr && "Did you call ImGui_ImplCitro3D_Init()?");
+#if IMGUI_VERSION_NUM < 19200
   if (!bd->FontLoaded) {
     ImGui_ImplCitro3D_LoadFontTextures();
   }
+#endif
 }
 
 IMGUI_IMPL_API void ImGui_ImplCitro3D_RenderDrawData(ImDrawData* draw_data,
@@ -222,6 +271,13 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_RenderDrawData(ImDrawData* draw_data,
   if (draw_data->CmdListsCount <= 0) return;
 
   auto bknd_data = ImGui_ImplCitro3D_GetBackendData();
+
+#if IMGUI_VERSION_NUM >= 19200
+  if (draw_data->Textures != nullptr)
+    for (ImTextureData* tex : *draw_data->Textures)
+      if (tex->Status != ImTextureStatus_OK)
+        ImGui_ImplCitro3D_UpdateTexture(tex);
+#endif
 
   unsigned width = draw_data->DisplaySize.x * draw_data->FramebufferScale.x;
   unsigned height = draw_data->DisplaySize.y * draw_data->FramebufferScale.y;
@@ -374,8 +430,11 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_RenderDrawData(ImDrawData* draw_data,
           }
 
 // Check if Bound Texture needs to be updated
-#if IMGUI_VERSION_NUM <= 19090
+#if IMGUI_VERSION_NUM <= 19130
           auto tex = static_cast<C3D_Tex*>(cmd.TextureId);
+#elif IMGUI_VERSION_NUM <= 19190
+          auto tex =
+              reinterpret_cast<C3D_Tex*>(static_cast<u32>(cmd.TextureId));
 #else
           auto tex = reinterpret_cast<C3D_Tex*>(cmd.TexRef.GetTexID());
 #endif
@@ -496,31 +555,12 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadFontTextures() {
              "ImGuiCitro3D_LoadFont: Max Tex size is 1024x1024!");
 
   if (bd->FontCreated) {
-    C3D_TexDelete(bd->FontTex);
-    delete bd->FontTex;
+    DestroyTheTex(bd->FontTex);
     bd->FontTex = nullptr;
     bd->FontCreated = false;
   }
 
-  bd->FontTex = new C3D_Tex;
-  C3D_TexInit(bd->FontTex, width, height, GPU_RGBA8);
-  C3D_TexSetFilter(bd->FontTex, GPU_LINEAR, GPU_LINEAR);
-  C3D_TexSetWrap(bd->FontTex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
-
-  for (int y = 0; y < height; y++) {
-    for (int x = 0; x < width; x++) {
-      int src = ((height - 1 - y) * width + x) * 4;
-      int dst = ImGui_ImplCitro3D_TileIndex(x, y, width) * 4;
-      static_cast<u8*>(bd->FontTex->data)[dst + 0] = pixels[src + 3];
-      static_cast<u8*>(bd->FontTex->data)[dst + 1] = pixels[src + 2];
-      static_cast<u8*>(bd->FontTex->data)[dst + 2] = pixels[src + 1];
-      static_cast<u8*>(bd->FontTex->data)[dst + 3] = pixels[src + 0];
-    }
-  }
-  C3D_TexFlush(bd->FontTex);
-
-  bd->FontTex->border = 0x00000000;
-
+  bd->FontTex = MakeItATexture(pixels, (width * height * 4), width, height);
   io.Fonts->SetTexID((ImTextureID)bd->FontTex);
   bd->FontCreated = true;
   bd->FontLoaded = true;
@@ -716,3 +756,49 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadSystemFont() {
   bknd_data->FontLoaded = true;
 #endif
 }
+
+#if IMGUI_VERSION_NUM >= 19200
+IMGUI_IMPL_API void ImGui_ImplCitro3D_UpdateTexture(ImTextureData* tex) {
+  if (tex->Status == ImTextureStatus_WantCreate) {
+    if (tex->Format != ImTextureFormat_RGBA32)
+      return;  // Dont support anything else yet
+    auto res =
+        MakeItATexture(reinterpret_cast<unsigned char*>(tex->GetPixels()),
+                       (tex->Width * tex->Height * 4), tex->Width, tex->Height);
+    tex->SetTexID((ImTextureID)res);
+    tex->SetStatus(ImTextureStatus_OK);
+  }
+  if (tex->Status == ImTextureStatus_WantUpdates) {
+    // Based on the OpenGL2 backend btw
+    // Update selected blocks. We only ever write to textures regions which have
+    // never been used before! This backend choose to use tex->Updates[] but you
+    // can use tex->UpdateRect to upload a single region.
+
+    C3D_Tex* t = reinterpret_cast<C3D_Tex*>(static_cast<u32>(tex->GetTexID()));
+
+    for (ImTextureRect& r : tex->Updates) {
+      unsigned char* p = reinterpret_cast<unsigned char*>(tex->GetPixels());
+      for (int y = 0; y < r.h; y++) {
+        for (int x = 0; x < r.w; x++) {
+          int src = ((y + r.y) * tex->Width + (x + r.x)) * 4;
+          int dst = ImGui_ImplCitro3D_TileIndex(
+                        (x + r.x), (tex->Height - 1 - (y + r.y)), tex->Width) *
+                    4;
+          static_cast<u8*>(t->data)[dst + 0] = p[src + 3];
+          static_cast<u8*>(t->data)[dst + 1] = p[src + 2];
+          static_cast<u8*>(t->data)[dst + 2] = p[src + 1];
+          static_cast<u8*>(t->data)[dst + 3] = p[src + 0];
+        }
+      }
+    }
+    C3D_TexFlush(t);
+    tex->SetStatus(ImTextureStatus_OK);
+  }
+  if (tex->Status == ImTextureStatus_WantDestroy && tex->UnusedFrames > 0) {
+    DestroyTheTex(
+        reinterpret_cast<C3D_Tex*>(static_cast<u32>(tex->GetTexID())));
+    tex->SetTexID(ImTextureID_Invalid);
+    tex->SetStatus(ImTextureStatus_Destroyed);
+  }
+}
+#endif

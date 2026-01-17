@@ -45,3 +45,6 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadFontTextures();
 /// @brief This function is an internal function that loads the system font, if
 /// requested
 IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadSystemFont();
+#if IMGUI_VERSION_NUM >= 19200
+IMGUI_IMPL_API void ImGui_ImplCitro3D_UpdateTexture(ImTextureData* tex);
+#endif

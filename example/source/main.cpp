@@ -61,7 +61,7 @@ void NpiImGuiImage(NpiEasyTex texture, size_t index,
                    const ImVec4& tint_col = ImVec4(1, 1, 1, 1),
                    const ImVec4& border_col = ImVec4(0, 0, 0, 0)) {
   const auto sub = Tex3DS_GetSubTexture(texture.t3x, index);
-  ImGui::Image(texture.tex, ImVec2(sub->width, sub->height),
+  ImGui::Image((ImTextureID)texture.tex, ImVec2(sub->width, sub->height),
                ImVec2(sub->left, sub->top), ImVec2(sub->right, sub->bottom),
                tint_col, border_col);
 }
@@ -124,9 +124,11 @@ int main() {
 #ifdef IMGUI_HAS_DOCK
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 #endif
+  io.Fonts->AddFontFromFileTTF("romfs:/Roboto.ttf", 14);
+  io.Fonts->AddFontDefault();
+
   ImGui_ImplCtr_Init();
-  ImGui_ImplCitro3D_Init();
-  io.Fonts->AddFontFromFileTTF("romfs:/ComicNeue.ttf", 16);
+  ImGui_ImplCitro3D_Init(false);
 
   NpiEasyTex ntex;
   NpiEasyTexLoad(ntex, "romfs:/gfx/test.t3x");
@@ -148,7 +150,7 @@ int main() {
     ImGui_ImplCtr_NewFrame();
     ImGui::NewFrame();
     ImGui::Begin("Test2");
-    ImGui::Text("Test");
+    ImGui::Text("ImGui Version: %s (%d)", IMGUI_VERSION, IMGUI_VERSION_NUM);
     ImGui::End();
     ImGui::SetNextWindowPos(ImVec2(200, 360), ImGuiCond_FirstUseEver,
                             ImVec2(0.5, 0.5));
