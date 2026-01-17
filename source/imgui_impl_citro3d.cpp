@@ -15,10 +15,6 @@
 #include "imgui_impl_c3d_shbin.h"
 #include "imgui_impl_citro3d.h"
 
-/*#if IMGUI_VERSION_NUM > 19090
-throw "ImGui Version is currently not supported by imgui-impl-ctr"
-#endif*/
-
 #ifdef IM_IMPL_C3D_NPI_ASSERT
 #define NPI_ASSERT(expr)                                                  \
   if (!(expr)) {                                                          \
@@ -122,9 +118,10 @@ unsigned int fontCodePointFromGlyphIndex(CFNT_s* const font,
   return 0;
 }
 
-C3D_Tex* MakeItATexture(const unsigned char* ptr, size_t len, int w, int h) {
+C3D_Tex* MakeItATexture(const unsigned char* ptr, size_t len, int w, int h,
+                        int bpp) {
   C3D_Tex* ret = new C3D_Tex;
-  C3D_TexInit(ret, w, h, GPU_RGBA8);
+  C3D_TexInit(ret, w, h, bpp == 4 ? GPU_RGBA8 : GPU_A8);
   C3D_TexSetFilter(ret, GPU_LINEAR, GPU_LINEAR);
   C3D_TexSetWrap(ret, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
 
@@ -132,12 +129,11 @@ C3D_Tex* MakeItATexture(const unsigned char* ptr, size_t len, int w, int h) {
   // Oh and we tile te tex as well as make them abgr
   for (int y = 0; y < h; y++) {
     for (int x = 0; x < w; x++) {
-      int src = ((h - 1 - y) * w + x) * 4;
-      int dst = ImGui_ImplCitro3D_TileIndex(x, y, w) * 4;
-      static_cast<u8*>(ret->data)[dst + 0] = ptr[src + 3];
-      static_cast<u8*>(ret->data)[dst + 1] = ptr[src + 2];
-      static_cast<u8*>(ret->data)[dst + 2] = ptr[src + 1];
-      static_cast<u8*>(ret->data)[dst + 3] = ptr[src + 0];
+      int src = ((h - 1 - y) * w + x) * bpp;
+      int dst = ImGui_ImplCitro3D_TileIndex(x, y, w) * bpp;
+      for (int i = 0; i < bpp; i++) {
+        static_cast<u8*>(ret->data)[dst + (bpp - 1 - i)] = ptr[src + i];
+      }
     }
   }
   C3D_TexFlush(ret);
@@ -522,9 +518,18 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_RenderDrawData(ImDrawData* draw_data,
 
               auto const env = C3D_GetTexEnv(0);
               C3D_TexEnvInit(env);
-              C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR,
-                            GPU_PRIMARY_COLOR);
-              C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
+              if (tex->fmt == GPU_RGBA8) {
+                C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR,
+                              GPU_PRIMARY_COLOR);
+                C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
+              } else {
+                C3D_TexEnvSrc(env, C3D_RGB, GPU_PRIMARY_COLOR,
+                              GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+                C3D_TexEnvSrc(env, C3D_Alpha, GPU_TEXTURE0, GPU_PRIMARY_COLOR,
+                              GPU_PRIMARY_COLOR);
+                C3D_TexEnvFunc(env, C3D_RGB, GPU_REPLACE);
+                C3D_TexEnvFunc(env, C3D_Alpha, GPU_MODULATE);
+              }
             }
 
             // draw triangles
@@ -560,7 +565,7 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadFontTextures() {
     bd->FontCreated = false;
   }
 
-  bd->FontTex = MakeItATexture(pixels, (width * height * 4), width, height);
+  bd->FontTex = MakeItATexture(pixels, (width * height * 4), width, height, 4);
   io.Fonts->SetTexID((ImTextureID)bd->FontTex);
   bd->FontCreated = true;
   bd->FontLoaded = true;
@@ -760,11 +765,10 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_LoadSystemFont() {
 #if IMGUI_VERSION_NUM >= 19200
 IMGUI_IMPL_API void ImGui_ImplCitro3D_UpdateTexture(ImTextureData* tex) {
   if (tex->Status == ImTextureStatus_WantCreate) {
-    if (tex->Format != ImTextureFormat_RGBA32)
-      return;  // Dont support anything else yet
     auto res =
         MakeItATexture(reinterpret_cast<unsigned char*>(tex->GetPixels()),
-                       (tex->Width * tex->Height * 4), tex->Width, tex->Height);
+                       (tex->Width * tex->Height * 4), tex->Width, tex->Height,
+                       tex->BytesPerPixel);
     tex->SetTexID((ImTextureID)res);
     tex->SetStatus(ImTextureStatus_OK);
   }
@@ -780,14 +784,14 @@ IMGUI_IMPL_API void ImGui_ImplCitro3D_UpdateTexture(ImTextureData* tex) {
       unsigned char* p = reinterpret_cast<unsigned char*>(tex->GetPixels());
       for (int y = 0; y < r.h; y++) {
         for (int x = 0; x < r.w; x++) {
-          int src = ((y + r.y) * tex->Width + (x + r.x)) * 4;
+          int src = ((y + r.y) * tex->Width + (x + r.x)) * tex->BytesPerPixel;
           int dst = ImGui_ImplCitro3D_TileIndex(
                         (x + r.x), (tex->Height - 1 - (y + r.y)), tex->Width) *
-                    4;
-          static_cast<u8*>(t->data)[dst + 0] = p[src + 3];
-          static_cast<u8*>(t->data)[dst + 1] = p[src + 2];
-          static_cast<u8*>(t->data)[dst + 2] = p[src + 1];
-          static_cast<u8*>(t->data)[dst + 3] = p[src + 0];
+                    tex->BytesPerPixel;
+          for (int i = 0; i < tex->BytesPerPixel; i++) {
+            static_cast<u8*>(t->data)[dst + (tex->BytesPerPixel - 1 - i)] =
+                p[src + i];
+          }
         }
       }
     }

@@ -24,9 +24,9 @@ git submodule add https://github.com/npid7/imgui-impl-ctr
 ```
 
 > [!CAUTION]
-> Not every ImGui Version is supported yet. `v1.90.9` and `v1.90.9-docking` are the last
-> versions i confirmed as working. As this Project started at `v1.87` i cannot confirm any version
-> outside of `v1.87` to `v1.90.9` as working.
+> ImGui `v1.90.9` and `v1.90.9-docking` are the last versions that support the 3ds system font.
+> The lowest tested Version is `v1.87`.
+> Oh and the `master` **branch** is working as well *without system font*
 
 First but this into your `CMakeLists.txt`
 
